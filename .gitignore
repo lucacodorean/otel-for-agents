@@ -1,0 +1,10 @@
+.env
+*.egg-info/
+.pytest_cache/
+# rendered files (contain secrets or machine-specific paths)
+infra/prometheus/web-config.yml
+infra/prometheus/prometheus.yml
+infra/prometheus/scrape-password
+infra/collector/otel-collector.plist
+infra/collector/otel-collector.service
+infra/collector/config.yaml

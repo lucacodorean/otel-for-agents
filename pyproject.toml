@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "otel-setup"
+version = "0.1.0"
+description = "Configurator for the Claude Code OpenTelemetry collector pipeline"
+requires-python = ">=3.10"
+dependencies = ["bcrypt>=4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyyaml>=6"]
+
+[project.scripts]
+otel_setup = "otel_setup.cli:main"
+
+[tool.setuptools]
+packages = ["otel_setup"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

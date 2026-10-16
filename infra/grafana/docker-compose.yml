@@ -1,0 +1,43 @@
+# Local Grafana. Run from this directory:
+#   docker compose --env-file ../../.env up -d
+# (infra/start.sh does this). Dashboards and the Prometheus data source are provisioned
+# from files in this directory; nothing is configured by hand and nothing is sent to
+# third parties (update checks, analytics and the news feed are switched off).
+services:
+  grafana:
+    image: grafana/grafana:13.2.4
+    container_name: otel-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://127.0.0.1:3000}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      # Read by provisioning/datasources/prometheus.yml. The data source needs read access only;
+      # use a separate reader user in production (GRAFANA_PROMETHEUS_USERNAME / _PASSWORD).
+      PROMETHEUS_DS_URL: ${GRAFANA_PROMETHEUS_URL:-http://prometheus:9090}
+      PROMETHEUS_DS_USER: ${GRAFANA_PROMETHEUS_USERNAME:-${PROMETHEUS_USERNAME:?set PROMETHEUS_USERNAME in .env}}
+      PROMETHEUS_DS_PASSWORD: ${GRAFANA_PROMETHEUS_PASSWORD:-${PROMETHEUS_PASSWORD:?set PROMETHEUS_PASSWORD in .env}}
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      otel-net:
+        aliases: [grafana]
+
+volumes:
+  grafana-data:
+
+networks:
+  otel-net:  # shared with the otel_setup stack and the dev Prometheus; created by infra/start.sh
+    name: otel-net
+    external: true

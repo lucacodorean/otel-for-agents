@@ -1,0 +1,396 @@
+# Recording rules for the Claude Code metrics.
+#
+# Source series (verified against a running instance with real sessions):
+#   claude_code_token_usage_tokens_total   labels: type (input|output|cacheRead|cacheCreation)
+#   claude_code_cost_usage_USD_total
+# both with: host_name, marketplace, plugin_name, skill_name, agent_name, model, session_id.
+#
+# Why not rate()/increase(): the counters are cumulative PER SESSION and a series is born
+# with its first value already non-zero. Over remote write there is no zero baseline, so
+# increase() never counts that first sample and badly undercounts short sessions and
+# rarely used skills. Instead the rules below take exact deltas:
+#
+#     delta = last_over_time(x[W]) - (last_over_time(x[W] offset W) or 0)
+#
+# i.e. the last value in this window minus the last value in the previous window, with 0
+# for series that are new. Summed over series this adds up each session's growth exactly.
+# Consecutive windows do not overlap, so the *:delta5m series can be summed over any
+# period with sum_over_time() and that gives exact consumption for that period.
+#
+# Naming: claude_code:<metric>[_by_<level>]:<operation>
+#   no suffix        full label set (host, marketplace, plugin, skill, agent, model[, type])
+#   _by_component    marketplace, plugin_name, skill_name, agent_name
+#   _by_model        marketplace, model[, type]
+#   _by_host         host_name
+groups:
+  # --- live throughput and activity (1m) ------------------------------------------------
+  - name: claude_code_live
+    interval: 1m
+    rules:
+      # Per-second rate while a session is running (needs two exports inside 5m).
+      - record: claude_code:token_usage:rate5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+            rate(claude_code_token_usage_tokens_total[5m])
+          )
+      - record: claude_code:cost_usage:rate5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+            rate(claude_code_cost_usage_USD_total[5m])
+          )
+      # Sum of each session's last cumulative value for sessions active in the last hour
+      # (includes the part of a session before the window; see *:delta1h for the exact one).
+      - record: claude_code:cost_usage:last1h
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+            last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[1h])
+          )
+      - record: claude_code:token_usage:last1h
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+            last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[1h])
+          )
+      # The session counter carries no skill/agent/plugin, so in drop mode it never passes
+      # the marketplace filter. Count sessions that used a marketplace component instead.
+      - record: claude_code:active_sessions:count1h
+        expr: >
+          count by (host_name, marketplace) (
+            count by (host_name, marketplace, session_id) (
+              increase(claude_code_token_usage_tokens_total{marketplace!=""}[1h]) > 0
+            )
+          )
+      # Per host only: a session that used components of several marketplaces counts once.
+      - record: claude_code:active_sessions_by_host:count1h
+        expr: >
+          count by (host_name) (
+            count by (host_name, session_id) (
+              increase(claude_code_token_usage_tokens_total{marketplace!=""}[1h]) > 0
+            )
+          )
+
+  # --- exact consumption: deltas, rollups, rolling windows, cumulative (5m) ----------------
+  # Evaluated every 5m and in order: the delta rules first, everything else derives from
+  # them. The group interval MUST equal the delta window (5m) so windows never overlap.
+  - name: claude_code_consumption
+    interval: 5m
+    rules:
+      # Consumption in each 5-minute step. Graph it for "tokens/cost over time"; sum it
+      # over any period for exact totals.
+      - record: claude_code:token_usage:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+              last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m])
+            -
+              (
+                last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m] offset 5m)
+                or
+                (0 * last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m]))
+              )
+          )
+      - record: claude_code:cost_usage:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+              last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m])
+            -
+              (
+                last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m] offset 5m)
+                or
+                (0 * last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m]))
+              )
+          )
+
+      # Per agent / skill / plugin over time (all token types, all models, all hosts).
+      - record: claude_code:token_usage_by_component:delta5m
+        expr: sum by (marketplace, plugin_name, skill_name, agent_name) (claude_code:token_usage:delta5m)
+      - record: claude_code:cost_usage_by_component:delta5m
+        expr: sum by (marketplace, plugin_name, skill_name, agent_name) (claude_code:cost_usage:delta5m)
+      # Per model and token type (input / output / cacheRead / cacheCreation).
+      - record: claude_code:token_usage_by_model:delta5m
+        expr: sum by (marketplace, model, type) (claude_code:token_usage:delta5m)
+      - record: claude_code:cost_usage_by_model:delta5m
+        expr: sum by (marketplace, model) (claude_code:cost_usage:delta5m)
+      # Per machine.
+      - record: claude_code:token_usage_by_host:delta5m
+        expr: sum by (host_name, marketplace) (claude_code:token_usage:delta5m)
+      - record: claude_code:cost_usage_by_host:delta5m
+        expr: sum by (host_name, marketplace) (claude_code:cost_usage:delta5m)
+
+      # Rolling windows: exact consumption in the last 1h / 24h / 7d per agent/skill/plugin.
+      - record: claude_code:token_usage_by_component:delta1h
+        expr: sum_over_time(claude_code:token_usage_by_component:delta5m[1h])
+      - record: claude_code:token_usage_by_component:delta24h
+        expr: sum_over_time(claude_code:token_usage_by_component:delta5m[24h])
+      - record: claude_code:token_usage_by_component:delta7d
+        expr: sum_over_time(claude_code:token_usage_by_component:delta5m[7d])
+      - record: claude_code:cost_usage_by_component:delta1h
+        expr: sum_over_time(claude_code:cost_usage_by_component:delta5m[1h])
+      - record: claude_code:cost_usage_by_component:delta24h
+        expr: sum_over_time(claude_code:cost_usage_by_component:delta5m[24h])
+      - record: claude_code:cost_usage_by_component:delta7d
+        expr: sum_over_time(claude_code:cost_usage_by_component:delta5m[7d])
+
+      # Cumulative since the oldest data Prometheus still holds (the 30d window is capped by
+      # retention): a running total per agent/skill/plugin that only grows. For "cumulative
+      # over a chosen timeframe" subtract its value at the start of the range, e.g.
+      #   sum(claude_code:token_usage_by_component:cumulative)
+      #     - sum(last_over_time(claude_code:token_usage_by_component:cumulative[1h] @ start()))
+      - record: claude_code:token_usage_by_component:cumulative
+        expr: >
+          sum by (marketplace, plugin_name, skill_name, agent_name) (
+            last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[30d])
+          )
+      - record: claude_code:cost_usage_by_component:cumulative
+        expr: >
+          sum by (marketplace, plugin_name, skill_name, agent_name) (
+            last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[30d])
+          )
+
+      # Efficiency, over the last hour. Cache hit ratio = cacheRead / all input-side tokens.
+      - record: claude_code:cache_hit_ratio:1h
+        expr: >
+          sum by (marketplace, plugin_name, skill_name, agent_name, model) (
+            sum_over_time(claude_code:token_usage:delta5m{type="cacheRead"}[1h])
+          )
+          /
+          (
+            sum by (marketplace, plugin_name, skill_name, agent_name, model) (
+              sum_over_time(claude_code:token_usage:delta5m{type=~"input|cacheRead|cacheCreation"}[1h])
+            ) > 0
+          )
+      # Cost per million tokens (all token types) per agent/skill/plugin, last 24h.
+      - record: claude_code:cost_per_mtok:24h
+        expr: >
+          claude_code:cost_usage_by_component:delta24h
+          /
+          (claude_code:token_usage_by_component:delta24h / 1e6 > 0)
+
+  # --- quality signals from events (5m) ---------------------------------------------------
+  # Counters derived from Claude Code *events* by the Collector (QUALITY_SIGNALS=true).
+  # skill_activated and subagent_completed are scoped to marketplace components (and carry
+  # marketplace/plugin_name); tool results and hook runs name no component, so they are
+  # global (no marketplace label). Same exact-delta method as above; a Collector restart
+  # starts new series (the connector's instance id is a label), which the delta handles
+  # with a zero baseline.
+  - name: claude_code_quality
+    interval: 5m
+    rules:
+      # Skill activations per 5 minutes (adoption). invocation_trigger: user-slash | claude-proactive | nested-skill.
+      - record: claude_code:skill_activations:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, invocation_trigger, skill_source) (
+              last_over_time(claude_code_skill_activations_total[5m])
+            -
+              (last_over_time(claude_code_skill_activations_total[5m] offset 5m) or (0 * last_over_time(claude_code_skill_activations_total[5m])))
+          )
+      # Subagent runs completed.
+      - record: claude_code:subagent_completions:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
+              last_over_time(claude_code_subagent_completions_total[5m])
+            -
+              (last_over_time(claude_code_subagent_completions_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_completions_total[5m])))
+          )
+      - record: claude_code:subagent_tool_uses:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
+              last_over_time(claude_code_subagent_tool_uses_total[5m])
+            -
+              (last_over_time(claude_code_subagent_tool_uses_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_tool_uses_total[5m])))
+          )
+      # Tool calls that ran, by tool and outcome (success="false" carries error_type). Skill and
+      # Agent tool calls also carry skill_name / agent_name / plugin_name / marketplace.
+      - record: claude_code:tool_results:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, tool_name, success, error_type) (
+              last_over_time(claude_code_tool_results_total[5m])
+            -
+              (last_over_time(claude_code_tool_results_total[5m] offset 5m) or (0 * last_over_time(claude_code_tool_results_total[5m])))
+          )
+      # Hook runs.
+      - record: claude_code:hook_executions:delta5m
+        expr: >
+          sum by (host_name, hook_event, hook_name) (
+              last_over_time(claude_code_hook_executions_total[5m])
+            -
+              (last_over_time(claude_code_hook_executions_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_executions_total[5m])))
+          )
+      - record: claude_code:hook_blocking:delta5m
+        expr: >
+          sum by (host_name, hook_event, hook_name) (
+              last_over_time(claude_code_hook_blocking_total[5m])
+            -
+              (last_over_time(claude_code_hook_blocking_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_blocking_total[5m])))
+          )
+      - record: claude_code:hook_errors:delta5m
+        expr: >
+          sum by (host_name, hook_event, hook_name) (
+              last_over_time(claude_code_hook_errors_total[5m])
+            -
+              (last_over_time(claude_code_hook_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_errors_total[5m])))
+          )
+
+      # Rollups: per skill, per trigger, per agent.
+      - record: claude_code:skill_activations_by_skill:delta5m
+        expr: >
+          sum by (marketplace, plugin_name, skill_name) (claude_code:skill_activations:delta5m)
+      - record: claude_code:skill_activations_by_trigger:delta5m
+        expr: >
+          sum by (marketplace, skill_name, invocation_trigger) (claude_code:skill_activations:delta5m)
+      - record: claude_code:subagent_completions_by_agent:delta5m
+        expr: >
+          sum by (marketplace, plugin_name, agent_type) (claude_code:subagent_completions:delta5m)
+      - record: claude_code:subagent_tool_uses_by_agent:delta5m
+        expr: >
+          sum by (marketplace, plugin_name, agent_type) (claude_code:subagent_tool_uses:delta5m)
+      - record: claude_code:tool_results_by_tool:delta5m
+        expr: >
+          sum by (tool_name, success) (claude_code:tool_results:delta5m)
+
+      # Rolling windows (exact: sums of the non-overlapping 5m deltas).
+      - record: claude_code:skill_activations_by_skill:delta1h
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_skill:delta5m[1h])
+      - record: claude_code:skill_activations_by_skill:delta24h
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_skill:delta5m[24h])
+      - record: claude_code:skill_activations_by_skill:delta7d
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_skill:delta5m[7d])
+      - record: claude_code:skill_activations_by_trigger:delta1h
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_trigger:delta5m[1h])
+      - record: claude_code:skill_activations_by_trigger:delta24h
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_trigger:delta5m[24h])
+      - record: claude_code:skill_activations_by_trigger:delta7d
+        expr: >
+          sum_over_time(claude_code:skill_activations_by_trigger:delta5m[7d])
+      - record: claude_code:subagent_completions_by_agent:delta1h
+        expr: >
+          sum_over_time(claude_code:subagent_completions_by_agent:delta5m[1h])
+      - record: claude_code:subagent_completions_by_agent:delta24h
+        expr: >
+          sum_over_time(claude_code:subagent_completions_by_agent:delta5m[24h])
+      - record: claude_code:subagent_completions_by_agent:delta7d
+        expr: >
+          sum_over_time(claude_code:subagent_completions_by_agent:delta5m[7d])
+      - record: claude_code:subagent_tool_uses_by_agent:delta1h
+        expr: >
+          sum_over_time(claude_code:subagent_tool_uses_by_agent:delta5m[1h])
+      - record: claude_code:subagent_tool_uses_by_agent:delta24h
+        expr: >
+          sum_over_time(claude_code:subagent_tool_uses_by_agent:delta5m[24h])
+      - record: claude_code:subagent_tool_uses_by_agent:delta7d
+        expr: >
+          sum_over_time(claude_code:subagent_tool_uses_by_agent:delta5m[7d])
+      - record: claude_code:tool_results_by_tool:delta1h
+        expr: >
+          sum_over_time(claude_code:tool_results_by_tool:delta5m[1h])
+      - record: claude_code:tool_results_by_tool:delta24h
+        expr: >
+          sum_over_time(claude_code:tool_results_by_tool:delta5m[24h])
+      - record: claude_code:tool_results_by_tool:delta7d
+        expr: >
+          sum_over_time(claude_code:tool_results_by_tool:delta5m[7d])
+
+      # Quality ratios.
+      # Share of tool calls that succeeded, per tool, last 24h.
+      - record: claude_code:tool_success_ratio:24h
+        expr: >
+          sum by (tool_name) (claude_code:tool_results_by_tool:delta24h{success="true"}) / sum by (tool_name) (claude_code:tool_results_by_tool:delta24h)
+      # Failures by tool and error type, last 24h.
+      - record: claude_code:tool_errors_by_type:delta24h
+        expr: >
+          sum by (tool_name, error_type) (sum_over_time(claude_code:tool_results:delta5m{success="false"}[24h]))
+      # Average tool calls per subagent run, last 24h.
+      - record: claude_code:subagent_tool_uses_per_run:24h
+        expr: >
+          claude_code:subagent_tool_uses_by_agent:delta24h / (claude_code:subagent_completions_by_agent:delta24h > 0)
+      # Share of a skill's activations that Claude chose itself (1 = always proactive, 0 = always a slash command): a discoverability signal.
+      - record: claude_code:skill_proactive_share:24h
+        expr: >
+          sum by (marketplace, skill_name) (claude_code:skill_activations_by_trigger:delta24h{invocation_trigger="claude-proactive"}) / sum by (marketplace, skill_name) (claude_code:skill_activations_by_trigger:delta24h)
+      # Hook commands that failed without blocking, per hook run, last 24h.
+      - record: claude_code:hook_error_ratio:24h
+        expr: >
+          sum by (hook_event, hook_name) (sum_over_time(claude_code:hook_errors:delta5m[24h])) / (sum by (hook_event, hook_name) (sum_over_time(claude_code:hook_executions:delta5m[24h])) > 0)
+      # Hook commands that blocked, per hook run, last 24h.
+      - record: claude_code:hook_blocking_ratio:24h
+        expr: >
+          sum by (hook_event, hook_name) (sum_over_time(claude_code:hook_blocking:delta5m[24h])) / (sum by (hook_event, hook_name) (sum_over_time(claude_code:hook_executions:delta5m[24h])) > 0)
+
+      # Durations from the histograms (increase() is fine here: ratios and quantiles do not
+      # depend on the first sample).
+      - record: claude_code:subagent_duration_seconds:p95_1h
+        expr: >
+          histogram_quantile(0.95, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000
+      - record: claude_code:subagent_duration_seconds:p50_1h
+        expr: >
+          histogram_quantile(0.5, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000
+      - record: claude_code:subagent_duration_seconds:avg_1h
+        expr: >
+          (sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_sum[1h])) / (sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_count[1h])) > 0)) / 1000
+      - record: claude_code:tool_duration_seconds:p95_1h
+        expr: >
+          histogram_quantile(0.95, sum by (le, tool_name) (increase(claude_code_tool_duration_ms_bucket[1h]))) / 1000
+      - record: claude_code:tool_duration_seconds:avg_1h
+        expr: >
+          (sum by (tool_name) (increase(claude_code_tool_duration_ms_sum[1h])) / (sum by (tool_name) (increase(claude_code_tool_duration_ms_count[1h])) > 0)) / 1000
+      - record: claude_code:hook_duration_seconds:avg_1h
+        expr: >
+          (sum by (hook_event, hook_name) (increase(claude_code_hook_duration_ms_sum[1h])) / (sum by (hook_event, hook_name) (increase(claude_code_hook_duration_ms_count[1h])) > 0)) / 1000
+
+      # --- agent- and skill-based errors ---------------------------------------------------
+      # Only two kinds of error can be tied to an agent or skill: API errors (the event names the
+      # agent/skill that issued the request) and failed Skill / Agent tool calls (the target is
+      # read from tool_parameters). A Bash or Edit failure *inside* a skill or agent cannot be
+      # attributed: tool_result carries no agent or skill and events cannot be joined.
+      # Failed API requests per 5 minutes. No component labels = main session / unmatched (global).
+      - record: claude_code:api_errors:delta5m
+        expr: >
+          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, status_code) (
+              last_over_time(claude_code_api_errors_total[5m])
+            -
+              (last_over_time(claude_code_api_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_api_errors_total[5m])))
+          )
+      # API errors per agent / skill / plugin (only those that name one).
+      - record: claude_code:api_errors_by_component:delta5m
+        expr: >
+          sum by (marketplace, plugin_name, skill_name, agent_name) (claude_code:api_errors:delta5m{agent_name!=""} or claude_code:api_errors:delta5m{skill_name!=""})
+      # API errors per model and HTTP status (all, including global).
+      - record: claude_code:api_errors_by_status:delta5m
+        expr: >
+          sum by (model, status_code) (claude_code:api_errors:delta5m)
+      - record: claude_code:api_errors_by_component:delta1h
+        expr: >
+          sum_over_time(claude_code:api_errors_by_component:delta5m[1h])
+      - record: claude_code:api_errors_by_component:delta24h
+        expr: >
+          sum_over_time(claude_code:api_errors_by_component:delta5m[24h])
+      - record: claude_code:api_errors_by_component:delta7d
+        expr: >
+          sum_over_time(claude_code:api_errors_by_component:delta5m[7d])
+      - record: claude_code:api_errors_by_status:delta24h
+        expr: >
+          sum_over_time(claude_code:api_errors_by_status:delta5m[24h])
+      # Failed Skill / Agent tool calls per skill / agent (the invocation failed, e.g. skill not found or the subagent errored).
+      - record: claude_code:tool_failures_by_component:delta5m
+        expr: >
+          sum by (marketplace, plugin_name, skill_name, agent_name, tool_name, error_type) (claude_code:tool_results:delta5m{success="false",tool_name=~"Skill|Agent|Task"})
+      - record: claude_code:tool_failures_by_component:delta1h
+        expr: >
+          sum_over_time(claude_code:tool_failures_by_component:delta5m[1h])
+      - record: claude_code:tool_failures_by_component:delta24h
+        expr: >
+          sum_over_time(claude_code:tool_failures_by_component:delta5m[24h])
+      - record: claude_code:tool_failures_by_component:delta7d
+        expr: >
+          sum_over_time(claude_code:tool_failures_by_component:delta5m[7d])
+      # Share of Skill tool calls for a skill that succeeded, last 24h.
+      - record: claude_code:skill_invocation_success_ratio:24h
+        expr: >
+          sum by (marketplace, skill_name) (sum_over_time(claude_code:tool_results:delta5m{tool_name="Skill",success="true",skill_name!=""}[24h])) / (sum by (marketplace, skill_name) (sum_over_time(claude_code:tool_results:delta5m{tool_name="Skill",skill_name!=""}[24h])) > 0)
+      # Share of Agent tool calls for an agent that succeeded, last 24h.
+      - record: claude_code:agent_invocation_success_ratio:24h
+        expr: >
+          sum by (marketplace, agent_name) (sum_over_time(claude_code:tool_results:delta5m{tool_name=~"Agent|Task",success="true",agent_name!=""}[24h])) / (sum by (marketplace, agent_name) (sum_over_time(claude_code:tool_results:delta5m{tool_name=~"Agent|Task",agent_name!=""}[24h])) > 0)

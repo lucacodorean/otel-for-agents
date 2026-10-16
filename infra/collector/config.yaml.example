@@ -1,0 +1,88 @@
+# Collector config template. Rendered by `otel_setup collector render` into the
+# otel-setup-data Docker volume (config/config.yaml): every marker written as
+# two @ signs, a NAME and two @ signs is replaced. Secrets and the endpoint are
+# never inlined: they come from the service environment (${env:...}).
+#
+# Environment (passed to the container by docker compose from .env):
+#   PROMETHEUS_REMOTE_WRITE_URL, PROMETHEUS_USERNAME, PROMETHEUS_PASSWORD
+#
+# Network: the Collector runs in a container, so it binds 0.0.0.0 *inside* the
+# container's own network namespace. The compose file publishes the ports on the
+# host's 127.0.0.1 only, which is what keeps them off the network.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  basicauth/prometheus:
+    client_auth:
+      username: ${env:PROMETHEUS_USERNAME}
+      password: ${env:PROMETHEUS_PASSWORD}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  resource_detection:
+    detectors: [system]
+    system:
+      hostname_sources: [os]
+  # Privacy: user.email never leaves the machine.
+  attributes/privacy:
+    actions:
+      - key: user.email
+        action: delete
+  batch:
+    timeout: 10s
+@@MARKETPLACE_PROCESSORS@@
+@@CONNECTORS@@
+exporters:
+  prometheus_remote_write:
+    http:
+      endpoint: ${env:PROMETHEUS_REMOTE_WRITE_URL}
+      auth:
+        authenticator: basicauth/prometheus
+@@EXPORTER_TLS@@
+    # With the WAL on, the exporter only sends after reading buffer_size entries or
+    # after truncate_frequency (defaults 300 / 1m), which delays data by ~1 minute.
+    wal:
+      directory: @@WAL_DIR@@
+      buffer_size: 10
+      truncate_frequency: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 0s
+    # Keeps session.id and the other resource attributes as labels; cardinality
+    # is reduced by Prometheus recording rules, not here.
+    resource_constant_labels:
+      included: ["*"]
+
+service:
+  extensions: [health_check, basicauth/prometheus]
+  telemetry:
+    metrics:
+      level: normal
+      readers:  # the Collector's own metrics (exporter failures, queue size), published on 127.0.0.1:8888
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [@@METRICS_PROCESSORS@@]
+      exporters: [prometheus_remote_write]
+    # Quality signals (QUALITY_SIGNALS=true): a logs pipeline feeds the count/sum
+    # connectors, whose metrics go through their own metrics pipeline. Logs are never exported.
+@@EVENT_PIPELINES@@

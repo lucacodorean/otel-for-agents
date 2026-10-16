@@ -1,0 +1,85 @@
+# The otel_setup stack: the Collector (long-running) and the otel_setup CLI
+# (one-shot). Use infra/docker/otel_setup.sh instead of calling compose directly:
+# it exports the host user variables used below, creates the shared network and
+# passes the repository's .env to compose (credentials and the endpoint come from there).
+#
+# Host files used: only the repository's .env, ~/.claude (settings.json, which
+# Claude Code reads on the host) and ~/.ssh (read-only, for private marketplaces).
+# Everything else lives in Docker volumes.
+name: otel
+
+services:
+  # One-shot: seeds the volumes the Collector needs, then exits.
+  init:
+    image: otel-setup:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:?use infra/docker/otel_setup.sh}
+        HOST_GID: ${HOST_GID:?use infra/docker/otel_setup.sh}
+        HOST_USER: ${HOST_USER:?use infra/docker/otel_setup.sh}
+    user: root
+    entrypoint: ["sh", "-c"]
+    # The Collector image runs as uid 10001 and has no timezone database, so the WAL
+    # volume is handed to that user and the CLI image's tzdata is shared for COLLECTOR_TIMEZONE.
+    command:
+      - mkdir -p /wal/wal && chown -R 10001:10001 /wal && cp -a /usr/share/zoneinfo/. /tzdata/
+    volumes:
+      - collector-wal:/wal
+      - tzdata:/tzdata
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:${COLLECTOR_VERSION:-0.162.0}
+    restart: unless-stopped
+    # resource_detection reports the container's hostname as host.name; use the host's
+    # real one so the label is meaningful and stable across container recreations.
+    hostname: ${HOST_NAME:?use infra/docker/otel_setup.sh}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    command: ["--config=/var/lib/otel-setup/config/config.yaml"]
+    environment:
+      PROMETHEUS_REMOTE_WRITE_URL: ${PROMETHEUS_REMOTE_WRITE_URL:?set it in .env}
+      PROMETHEUS_USERNAME: ${PROMETHEUS_USERNAME:?set it in .env}
+      PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?set it in .env}
+      TZ: ${COLLECTOR_TIMEZONE:-UTC}
+    ports:  # loopback only: the receivers listen on 0.0.0.0 inside the container
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:13133:13133"
+      - "127.0.0.1:8888:8888"
+    volumes:
+      - otel-setup-data:/var/lib/otel-setup:ro
+      - collector-wal:/var/lib/otelcol
+      - tzdata:/usr/share/zoneinfo:ro
+      - ${PROMETHEUS_CA_FILE:-/dev/null}:/etc/otelcol/ca.pem:ro
+    networks: [otel-net]
+
+  otel_setup:
+    image: otel-setup:local
+    profiles: [cli]
+    environment:
+      CLAUDE_SETTINGS_PATH: /claude/settings.json
+      COLLECTOR_HEALTH_URL: http://collector:13133/
+      SSH_AUTH_SOCK: ${SSH_AUTH_SOCK_IN_CONTAINER:-}
+    volumes:
+      - ../../:/app
+      - otel-setup-data:/var/lib/otel-setup
+      - otel-setup-cache:/var/cache/otel-setup
+      - ${HOST_HOME:?use infra/docker/otel_setup.sh}/.claude:/claude
+      - ${HOST_HOME}/.ssh:/home/${HOST_USER}/.ssh:ro
+      - ${PROMETHEUS_CA_FILE:-/dev/null}:/etc/otelcol/ca.pem:ro
+    networks: [otel-net]
+
+volumes:
+  otel-setup-data:
+  otel-setup-cache:
+  collector-wal:
+  tzdata:
+
+networks:
+  # Shared with the dev Prometheus (infra/prometheus); created by otel_setup.sh.
+  otel-net:
+    name: otel-net
+    external: true

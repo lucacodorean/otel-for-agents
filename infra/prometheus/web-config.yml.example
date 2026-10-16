@@ -1,0 +1,3 @@
+# Rendered to web-config.yml (git-ignored) by `otel_setup prometheus render-config`.
+basic_auth_users:
+  __USERNAME__: "__BCRYPT_HASH__"

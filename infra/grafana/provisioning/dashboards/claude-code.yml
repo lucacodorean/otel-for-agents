@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: claude-code
+    type: file
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      # Each sub-directory of dashboards/ becomes a Grafana folder of the same name
+      # (see SECTIONS in generate_dashboards.py).
+      foldersFromFilesStructure: true

@@ -1,0 +1,33 @@
+# Development Prometheus only. Run from this directory:
+#   docker network create otel-net   # once (infra/docker/otel_setup.sh also does this)
+#   docker compose --env-file ../../.env up -d
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    container_name: otel-dev-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.config.file=/etc/prometheus/web-config.yml
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${DEV_PROMETHEUS_RETENTION:-2d}
+    ports:
+      - "127.0.0.1:${DEV_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./scrape-password:/etc/prometheus/scrape-password:ro
+      - ./recording-rules.yml:/etc/prometheus/recording-rules.yml:ro
+      - ./web-config.yml:/etc/prometheus/web-config.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      otel-net:
+        aliases: [prometheus]  # the Collector's dev remote-write URL: http://prometheus:9090/api/v1/write
+
+volumes:
+  prometheus-data:
+
+networks:
+  otel-net:  # shared with the otel_setup stack; created by infra/docker/otel_setup.sh
+    name: otel-net
+    external: true

@@ -1,0 +1,20 @@
+# Rendered to prometheus.yml (git-ignored) by `otel_setup prometheus render-config`.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - recording-rules.yml
+
+scrape_configs:
+  # Self-scrape only. The web config enforces basic auth on every endpoint,
+  # including /metrics, so the scrape authenticates with the dev user.
+  - job_name: prometheus
+    scheme: __SCHEME__
+    basic_auth:
+      username: __USERNAME__
+      password_file: /etc/prometheus/scrape-password
+    tls_config:
+      insecure_skip_verify: true   # loopback inside the container, dev only
+    static_configs:
+      - targets: ["localhost:9090"]
