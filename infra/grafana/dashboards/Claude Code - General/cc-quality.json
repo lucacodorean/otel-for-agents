@@ -46,7 +46,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Marketplace skills activated.",
+      "description": "Skills activated.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -103,7 +103,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Marketplace subagents completed.",
+      "description": "Subagents completed.",
       "fieldConfig": {
         "defaults": {
           "color": {

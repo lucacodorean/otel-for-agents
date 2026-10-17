@@ -111,7 +111,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Errors issued by a named marketplace skill or agent.",
+      "description": "Errors issued by a named skill or agent.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -307,7 +307,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Only errors that name a marketplace agent or skill.",
+      "description": "Only errors that name an agent or skill.",
       "fieldConfig": {
         "defaults": {
           "custom": {
