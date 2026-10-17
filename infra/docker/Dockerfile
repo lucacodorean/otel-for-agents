@@ -9,11 +9,12 @@ RUN apt-get update \
  && pip install --no-cache-dir "bcrypt>=4"
 
 # Run as the host user so files written to bind mounts (repo, ~/.claude) keep their
-# owner, and ssh/git find a passwd entry for that uid.
+# owner, and ssh/git find a passwd entry for that uid. The host's primary group may
+# already exist in the image (macOS: gid 20 "staff" is Debian's "dialout"); it is reused.
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG HOST_USER=otel
-RUN groupadd -g "${HOST_GID}" "${HOST_USER}" \
+RUN { getent group "${HOST_GID}" >/dev/null || groupadd -g "${HOST_GID}" "${HOST_USER}"; } \
  && useradd -u "${HOST_UID}" -g "${HOST_GID}" -m -d "/home/${HOST_USER}" "${HOST_USER}" \
  && mkdir -p /var/lib/otel-setup /var/cache/otel-setup \
  && chown "${HOST_UID}:${HOST_GID}" /var/lib/otel-setup /var/cache/otel-setup

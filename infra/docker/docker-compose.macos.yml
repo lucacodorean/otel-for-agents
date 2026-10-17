@@ -1,0 +1,6 @@
+# Added by infra/docker/otel_setup.sh on macOS (Docker Desktop / OrbStack) when an SSH agent
+# is forwarded: the VM's agent socket, /run/host-services/ssh-auth.sock, is root:root 0660,
+# so the CLI (running as the host uid) needs group 0 to use it.
+services:
+  otel_setup:
+    group_add: ["0"]

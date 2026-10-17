@@ -16,16 +16,30 @@ ENV_FILE=../../.env
 mkdir -p "$HOME/.claude" "$HOME/.ssh"
 docker network inspect otel-net >/dev/null 2>&1 || docker network create otel-net >/dev/null
 
-compose() { docker compose --env-file "$ENV_FILE" -f docker-compose.yml "$@"; }
+source ../lib/platform.sh
+os="$(otel_os)" || exit 2
+compose_files=(-f docker-compose.yml)
 
+compose() { docker compose --env-file "$ENV_FILE" "${compose_files[@]}" "$@"; }
+
+# Forward the host's SSH agent (private marketplaces). On macOS the host socket cannot be
+# bind-mounted into the Linux VM; Docker Desktop and OrbStack expose the agent at a fixed
+# path instead, owned by root:root 0660, so the CLI user also joins group 0 (macos override).
 cli() {
-  local extra=()
-  if [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]]; then
+  local extra=() sock="${SSH_AUTH_SOCK:-}"
+  if [[ -n $sock && -S $sock ]]; then
     export SSH_AUTH_SOCK_IN_CONTAINER=/ssh-agent
-    extra+=(-v "${SSH_AUTH_SOCK}:/ssh-agent")
+    if [[ $os == macos ]]; then
+      case "$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)" in
+        *"Docker Desktop"*|*OrbStack*)
+          sock=/run/host-services/ssh-auth.sock
+          compose_files+=(-f docker-compose.macos.yml) ;;
+      esac
+    fi
+    extra+=(-v "$sock:/ssh-agent")
   fi
   compose build --quiet init
-  compose run --rm "${extra[@]}" otel_setup "$@"
+  compose run --rm ${extra[@]+"${extra[@]}"} otel_setup "$@"
 }
 
 dry=false; for a in "$@"; do [[ $a == --dry-run ]] && dry=true; done

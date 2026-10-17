@@ -8,3 +8,4 @@ infra/prometheus/scrape-password
 infra/collector/otel-collector.plist
 infra/collector/otel-collector.service
 infra/collector/config.yaml
+.claude/
