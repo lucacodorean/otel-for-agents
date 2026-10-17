@@ -259,7 +259,8 @@ the ports on the host's `127.0.0.1` only. The events pipelines exist only when
 
 ## Quick start
 
-Requirements: Docker with the compose plugin, and `git`.
+Requirements: Docker with the compose plugin, and `git`. Linux and macOS are supported
+(on macOS: Docker Desktop, OrbStack or Colima; the bash that ships with macOS is enough).
 
 ```bash
 cp .env.example .env
@@ -303,6 +304,13 @@ infra/docker/otel_setup.sh status
 The dev Prometheus is started automatically only when `PROMETHEUS_REMOTE_WRITE_URL`
 points at the dev host name (`prometheus`). The script ends with `status` and exits
 non-zero if the pipeline is not healthy.
+
+`infra/start.sh` (like `infra/stop.sh`) is an adaptor: it detects the OS and runs
+`infra/linux/start.sh` or `infra/macos/start.sh`. Those check that OS's Docker setup and then
+run the shared steps in `infra/lib/start-common.sh`. On macOS, Docker Desktop (or OrbStack) is
+started and waited for when it is not running, and the SSH agent for private marketplaces is
+forwarded through the VM's `/run/host-services/ssh-auth.sock`
+(`infra/docker/docker-compose.macos.yml`).
 
 At the end it prints the Prometheus endpoints (UI, query API, rules, targets, metrics,
 health, remote write), the Grafana URL and dashboard links, and the Collector's loopback endpoints.
@@ -740,13 +748,16 @@ README.md
 pyproject.toml
 otel_setup/             Python engine: CLI, settings merge, marketplace sync, rendering
 infra/
-  docker/               otel_setup.sh (entry point), docker-compose.yml, Dockerfile
+  docker/               otel_setup.sh (entry point), docker-compose.yml, Dockerfile,
+                        docker-compose.macos.yml (SSH agent override on macOS)
   collector/            Collector config template
   prometheus/           dev Prometheus: compose file, prometheus.yml and web-config
                         templates, recording-rules.yml
   grafana/              Grafana: compose file, provisioning (data source, dashboard
                         provider), dashboards/*.json and the script that generates them
-  start.sh, stop.sh     bring the whole stack up / down
+  start.sh, stop.sh     bring the whole stack up / down: detect the OS and run linux/ or macos/
+  linux/, macos/        per-OS start.sh / stop.sh: Docker checks, then lib/*-common.sh
+  lib/                  platform.sh (OS detection, dispatch) and the shared start/stop steps
 docs/intro.md           the original brief
 ```
 
@@ -765,7 +776,7 @@ docs/intro.md           the original brief
   attributed to a skill or agent (see [Quality signals](#quality-signals)). Hook failures per plugin
   are not available either: `hook_execution_complete` does not name the plugin.
 - Dev TLS is not provided yet; TLS is supported on the Collector side for a TLS-enabled target.
-- Tested on Linux only.
+- Tested on Linux; macOS support (Docker Desktop) is new and less tested. Windows only through WSL.
 
 ## Outlook
 
