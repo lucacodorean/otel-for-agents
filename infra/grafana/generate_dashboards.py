@@ -170,6 +170,13 @@ def target(expr: str, legend: str = "", instant: bool = False, interval: str | N
     return t
 
 
+def named(expr: str) -> str:
+    """Add a `component` label: the skill and/or agent name, or "main session" for usage that
+    belongs to neither (the main session's own turns). Use "{{component}}" as the legend."""
+    joined = f'label_join({expr}, "component", "", "skill_name", "agent_name")'
+    return f'label_replace({joined}, "component", "main session", "component", "")'
+
+
 def in_range(rule: str, sel: str) -> str:
     """Exact total over the dashboard range: sum of the non-overlapping 5m deltas."""
     return f"sum(sum_over_time({rule}{sel}[$__range]))"
@@ -191,26 +198,30 @@ def consumption() -> Board:
     allin = 'claude_code:token_usage:delta5m{marketplace=~"$marketplace",plugin_name=~"$plugin",type=~"input|cacheRead|cacheCreation"}'
     b.stat("Cache hit ratio", f"sum(sum_over_time({cache}[$__range])) / sum(sum_over_time({allin}[$__range]))", "percentunit", decimals=0,
            description="cacheRead / (input + cacheRead + cacheCreation).")
-    b.stat("Active sessions (last hour)", f"sum(claude_code:active_sessions:count1h{MP})", "short",
-           description="Distinct sessions that used a marketplace component in the last hour.")
+    b.stat("Active sessions (last hour)",
+           f"clamp_max(sum(claude_code:active_sessions:count1h{MP}), scalar(sum(claude_code:active_sessions_by_host:count1h)))", "short",
+           description="Distinct sessions with token usage in the last hour, in the selected marketplaces (\"none\" = "
+                       "outside any configured marketplace). A session that used several selected marketplaces can count "
+                       "more than once, but never beyond the total number of sessions.")
     b.stat("Hosts", f"count(count by (host_name) (claude_code:token_usage_by_host:delta5m{MP}))", "short",
            description="Hosts with usage in the last 5 minutes window of the rules.")
 
     b.row("Over time")
-    b.series("Tokens per agent / skill", [(f"sum by (agent_name, skill_name) ({tok}{SEL})", "{{agent_name}}{{skill_name}}")],
-             description="Consumption in each 5-minute step, stacked. Sum over a period for exact totals.")
-    b.series("Cost per agent / skill", [(f"sum by (agent_name, skill_name) ({cost}{SEL})", "{{agent_name}}{{skill_name}}")], "currencyUSD",
+    b.series("Tokens per agent / skill", [(named(f"sum by (agent_name, skill_name) ({tok}{SEL})"), "{{component}}")],
+             description="Consumption in each 5-minute step, stacked. Sum over a period for exact totals. "
+                         "\"main session\" = usage outside any agent or skill.")
+    b.series("Cost per agent / skill", [(named(f"sum by (agent_name, skill_name) ({cost}{SEL})"), "{{component}}")], "currencyUSD",
              description="Cost in each 5-minute step, stacked.")
     cum = "claude_code:token_usage_by_component:cumulative"
     b.series("Cumulative tokens since the start of the range",
-             [(f"sum by (agent_name, skill_name) ({cum}{SEL}) - (sum by (agent_name, skill_name) (last_over_time({cum}{SEL}[1h] @ start())) or (0 * sum by (agent_name, skill_name) ({cum}{SEL})))",
-               "{{agent_name}}{{skill_name}}")],
+             [(named(f"sum by (agent_name, skill_name) ({cum}{SEL}) - (sum by (agent_name, skill_name) (last_over_time({cum}{SEL}[1h] @ start())) or (0 * sum by (agent_name, skill_name) ({cum}{SEL})))"),
+               "{{component}}")],
              bars=False, stack=False, interval="5m",
              description="Running total per agent/skill, zero at the left edge of the range (uses the @ start() modifier).")
     ccum = "claude_code:cost_usage_by_component:cumulative"
     b.series("Cumulative cost since the start of the range",
-             [(f"sum by (agent_name, skill_name) ({ccum}{SEL}) - (sum by (agent_name, skill_name) (last_over_time({ccum}{SEL}[1h] @ start())) or (0 * sum by (agent_name, skill_name) ({ccum}{SEL})))",
-               "{{agent_name}}{{skill_name}}")],
+             [(named(f"sum by (agent_name, skill_name) ({ccum}{SEL}) - (sum by (agent_name, skill_name) (last_over_time({ccum}{SEL}[1h] @ start())) or (0 * sum by (agent_name, skill_name) ({ccum}{SEL})))"),
+               "{{component}}")],
              "currencyUSD", bars=False, stack=False, description="Same, for cost.")
     b.series("Tokens by type", [(f'sum by (type) (claude_code:token_usage_by_model:delta5m{MP})', "{{type}}")],
              description="input / output / cacheRead / cacheCreation.")
@@ -220,13 +231,13 @@ def consumption() -> Board:
 
     b.row("Rankings in the selected time range")
     by = "marketplace, plugin_name, skill_name, agent_name"
-    b.bars("Top agents / skills by cost", f"sum by ({by}) (sum_over_time({cost}{SEL}[$__range]))",
-           "{{plugin_name}} {{skill_name}}{{agent_name}}", "currencyUSD", top=15)
-    b.bars("Top agents / skills by tokens", f"sum by ({by}) (sum_over_time({tok}{SEL}[$__range]))",
-           "{{plugin_name}} {{skill_name}}{{agent_name}}", "short", top=15)
-    b.bars("Cache hit ratio, last hour", f"claude_code:cache_hit_ratio:1h{SEL}", "{{plugin_name}} {{skill_name}}{{agent_name}} {{model}}",
+    b.bars("Top agents / skills by cost", named(f"sum by ({by}) (sum_over_time({cost}{SEL}[$__range]))"),
+           "{{plugin_name}} {{component}}", "currencyUSD", top=15)
+    b.bars("Top agents / skills by tokens", named(f"sum by ({by}) (sum_over_time({tok}{SEL}[$__range]))"),
+           "{{plugin_name}} {{component}}", "short", top=15)
+    b.bars("Cache hit ratio, last hour", named(f"claude_code:cache_hit_ratio:1h{SEL}"), "{{plugin_name}} {{component}} {{model}}",
            "percentunit", maximum=1, top=15, description="Per agent/skill and model.")
-    b.bars("USD per million tokens, last 24 h", f"claude_code:cost_per_mtok:24h{SEL}", "{{plugin_name}} {{skill_name}}{{agent_name}}",
+    b.bars("USD per million tokens, last 24 h", named(f"claude_code:cost_per_mtok:24h{SEL}"), "{{plugin_name}} {{component}}",
            "currencyUSD", top=15)
     return b
 
@@ -239,8 +250,8 @@ def quality() -> Board:
     act, subs = "claude_code:skill_activations_by_skill:delta5m", "claude_code:subagent_completions_by_agent:delta5m"
 
     b.row("Totals in the selected time range")
-    b.stat("Skill activations", in_range(act, MP), description="Marketplace skills activated.")
-    b.stat("Subagent runs", in_range(subs, MP), description="Marketplace subagents completed.")
+    b.stat("Skill activations", in_range(act, MP), description="Skills activated.")
+    b.stat("Subagent runs", in_range(subs, MP), description="Subagents completed.")
     b.stat("Tool calls", "sum(sum_over_time(claude_code:tool_results_by_tool:delta5m[$__range]))", description="All tools, global.")
     b.stat("Tool success rate, 24 h",
            'sum(claude_code:tool_results_by_tool:delta24h{success="true"}) / sum(claude_code:tool_results_by_tool:delta24h)',
@@ -289,7 +300,7 @@ def errors() -> Board:
     b.row("Totals in the selected time range")
     b.stat("API errors (all)", "sum(sum_over_time(claude_code:api_errors_by_status:delta5m[$__range]))",
            thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 1}, {"color": "red", "value": 20}])
-    b.stat("API errors with a component", in_range(api_c, MP), description="Errors issued by a named marketplace skill or agent.")
+    b.stat("API errors with a component", in_range(api_c, MP), description="Errors issued by a named skill or agent.")
     b.stat("Failed skill / agent calls", in_range(fail, MP),
            thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 1}, {"color": "red", "value": 10}])
 
@@ -297,7 +308,7 @@ def errors() -> Board:
     b.series("API errors by status", [("sum by (model, status_code) (claude_code:api_errors_by_status:delta5m)", "{{model}} {{status_code}}")],
              description="All API errors, including the main session (no component).")
     b.series("API errors by agent / skill", [(f"sum by (agent_name, skill_name) ({api_c}{MP})", "{{agent_name}}{{skill_name}}")],
-             description="Only errors that name a marketplace agent or skill.")
+             description="Only errors that name an agent or skill.")
     b.bars("API errors by agent / skill, last 24 h", f"claude_code:api_errors_by_component:delta24h{MP}",
            "{{plugin_name}} {{skill_name}}{{agent_name}}", top=15)
     b.bars("API errors by status, last 24 h", "claude_code:api_errors_by_status:delta24h", "{{model}} {{status_code}}", top=15)

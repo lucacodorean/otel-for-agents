@@ -277,7 +277,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Distinct sessions that used a marketplace component in the last hour.",
+      "description": "Distinct sessions with token usage in the last hour, in the selected marketplaces (\"none\" = outside any configured marketplace). A session that used several selected marketplaces can count more than once, but never beyond the total number of sessions.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -318,7 +318,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(claude_code:active_sessions:count1h{marketplace=~\"$marketplace\"})",
+          "expr": "clamp_max(sum(claude_code:active_sessions:count1h{marketplace=~\"$marketplace\"}), scalar(sum(claude_code:active_sessions_by_host:count1h)))",
           "format": "time_series",
           "instant": true,
           "legendFormat": "",
@@ -404,7 +404,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Consumption in each 5-minute step, stacked. Sum over a period for exact totals.",
+      "description": "Consumption in each 5-minute step, stacked. Sum over a period for exact totals. \"main session\" = usage outside any agent or skill.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -449,10 +449,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (agent_name, skill_name) (claude_code:token_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})",
+          "expr": "label_replace(label_join(sum by (agent_name, skill_name) (claude_code:token_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\")",
           "instant": false,
           "interval": "5m",
-          "legendFormat": "{{agent_name}}{{skill_name}}",
+          "legendFormat": "{{component}}",
           "range": true,
           "refId": "A"
         }
@@ -510,10 +510,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})",
+          "expr": "label_replace(label_join(sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\")",
           "instant": false,
           "interval": "5m",
-          "legendFormat": "{{agent_name}}{{skill_name}}",
+          "legendFormat": "{{component}}",
           "range": true,
           "refId": "A"
         }
@@ -571,10 +571,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (agent_name, skill_name) (claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}) - (sum by (agent_name, skill_name) (last_over_time(claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[1h] @ start())) or (0 * sum by (agent_name, skill_name) (claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})))",
+          "expr": "label_replace(label_join(sum by (agent_name, skill_name) (claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}) - (sum by (agent_name, skill_name) (last_over_time(claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[1h] @ start())) or (0 * sum by (agent_name, skill_name) (claude_code:token_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}))), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\")",
           "instant": false,
           "interval": "5m",
-          "legendFormat": "{{agent_name}}{{skill_name}}",
+          "legendFormat": "{{component}}",
           "range": true,
           "refId": "A"
         }
@@ -632,10 +632,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}) - (sum by (agent_name, skill_name) (last_over_time(claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[1h] @ start())) or (0 * sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})))",
+          "expr": "label_replace(label_join(sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}) - (sum by (agent_name, skill_name) (last_over_time(claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[1h] @ start())) or (0 * sum by (agent_name, skill_name) (claude_code:cost_usage_by_component:cumulative{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}))), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\")",
           "instant": false,
           "interval": "5m",
-          "legendFormat": "{{agent_name}}{{skill_name}}",
+          "legendFormat": "{{component}}",
           "range": true,
           "refId": "A"
         }
@@ -939,10 +939,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(15, sum by (marketplace, plugin_name, skill_name, agent_name) (sum_over_time(claude_code:cost_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[$__range])))",
+          "expr": "topk(15, label_replace(label_join(sum by (marketplace, plugin_name, skill_name, agent_name) (sum_over_time(claude_code:cost_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[$__range])), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\"))",
           "format": "time_series",
           "instant": true,
-          "legendFormat": "{{plugin_name}} {{skill_name}}{{agent_name}}",
+          "legendFormat": "{{plugin_name}} {{component}}",
           "range": false,
           "refId": "A"
         }
@@ -989,10 +989,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(15, sum by (marketplace, plugin_name, skill_name, agent_name) (sum_over_time(claude_code:token_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[$__range])))",
+          "expr": "topk(15, label_replace(label_join(sum by (marketplace, plugin_name, skill_name, agent_name) (sum_over_time(claude_code:token_usage_by_component:delta5m{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}[$__range])), \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\"))",
           "format": "time_series",
           "instant": true,
-          "legendFormat": "{{plugin_name}} {{skill_name}}{{agent_name}}",
+          "legendFormat": "{{plugin_name}} {{component}}",
           "range": false,
           "refId": "A"
         }
@@ -1041,10 +1041,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(15, claude_code:cache_hit_ratio:1h{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})",
+          "expr": "topk(15, label_replace(label_join(claude_code:cache_hit_ratio:1h{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}, \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\"))",
           "format": "time_series",
           "instant": true,
-          "legendFormat": "{{plugin_name}} {{skill_name}}{{agent_name}} {{model}}",
+          "legendFormat": "{{plugin_name}} {{component}} {{model}}",
           "range": false,
           "refId": "A"
         }
@@ -1091,10 +1091,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(15, claude_code:cost_per_mtok:24h{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"})",
+          "expr": "topk(15, label_replace(label_join(claude_code:cost_per_mtok:24h{marketplace=~\"$marketplace\",plugin_name=~\"$plugin\"}, \"component\", \"\", \"skill_name\", \"agent_name\"), \"component\", \"main session\", \"component\", \"\"))",
           "format": "time_series",
           "instant": true,
-          "legendFormat": "{{plugin_name}} {{skill_name}}{{agent_name}}",
+          "legendFormat": "{{plugin_name}} {{component}}",
           "range": false,
           "refId": "A"
         }

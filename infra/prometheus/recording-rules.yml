@@ -17,6 +17,12 @@
 # Consecutive windows do not overlap, so the *:delta5m series can be summed over any
 # period with sum_over_time() and that gives exact consumption for that period.
 #
+# Marketplace: every rule keeps all data, not only configured marketplaces. Data that matched
+# no configured marketplace (skills and agents from user or project settings, plugins from
+# other marketplaces, the main session's own usage) gets marketplace="none", so dashboards
+# can select it like a marketplace. In FILTER_MODE=drop the Collector drops that data before
+# it reaches Prometheus, so "none" only appears in label mode or without MARKETPLACES.
+#
 # Naming: claude_code:<metric>[_by_<level>]:<operation>
 #   no suffix        full label set (host, marketplace, plugin, skill, agent, model[, type])
 #   _by_component    marketplace, plugin_name, skill_name, agent_name
@@ -30,41 +36,52 @@ groups:
       # Per-second rate while a session is running (needs two exports inside 5m).
       - record: claude_code:token_usage:rate5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
-            rate(claude_code_token_usage_tokens_total[5m])
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+              rate(claude_code_token_usage_tokens_total[5m])
+            )
+          , "marketplace", "none", "marketplace", "")
       - record: claude_code:cost_usage:rate5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
-            rate(claude_code_cost_usage_USD_total[5m])
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+              rate(claude_code_cost_usage_USD_total[5m])
+            )
+          , "marketplace", "none", "marketplace", "")
       # Sum of each session's last cumulative value for sessions active in the last hour
       # (includes the part of a session before the window; see *:delta1h for the exact one).
       - record: claude_code:cost_usage:last1h
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
-            last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[1h])
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+              last_over_time(claude_code_cost_usage_USD_total[1h])
+            )
+          , "marketplace", "none", "marketplace", "")
       - record: claude_code:token_usage:last1h
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
-            last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[1h])
-          )
-      # The session counter carries no skill/agent/plugin, so in drop mode it never passes
-      # the marketplace filter. Count sessions that used a marketplace component instead.
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+              last_over_time(claude_code_token_usage_tokens_total[1h])
+            )
+          , "marketplace", "none", "marketplace", "")
+      # The session counter carries no skill/agent/plugin, so in drop mode it never reaches
+      # Prometheus. Count sessions with token usage instead, per marketplace ("none" = usage
+      # outside a configured marketplace, the main session's own usage included).
       - record: claude_code:active_sessions:count1h
         expr: >
-          count by (host_name, marketplace) (
-            count by (host_name, marketplace, session_id) (
-              increase(claude_code_token_usage_tokens_total{marketplace!=""}[1h]) > 0
+          label_replace(
+            count by (host_name, marketplace) (
+              count by (host_name, marketplace, session_id) (
+                increase(claude_code_token_usage_tokens_total[1h]) > 0
+              )
             )
-          )
-      # Per host only: a session that used components of several marketplaces counts once.
+          , "marketplace", "none", "marketplace", "")
+      # Per host only: a session that used several marketplaces (or one and "none") counts once.
       - record: claude_code:active_sessions_by_host:count1h
         expr: >
           count by (host_name) (
             count by (host_name, session_id) (
-              increase(claude_code_token_usage_tokens_total{marketplace!=""}[1h]) > 0
+              increase(claude_code_token_usage_tokens_total[1h]) > 0
             )
           )
 
@@ -78,26 +95,30 @@ groups:
       # over any period for exact totals.
       - record: claude_code:token_usage:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
-              last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m])
-            -
-              (
-                last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m] offset 5m)
-                or
-                (0 * last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[5m]))
-              )
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, type) (
+                last_over_time(claude_code_token_usage_tokens_total[5m])
+              -
+                (
+                  last_over_time(claude_code_token_usage_tokens_total[5m] offset 5m)
+                  or
+                  (0 * last_over_time(claude_code_token_usage_tokens_total[5m]))
+                )
+            )
+          , "marketplace", "none", "marketplace", "")
       - record: claude_code:cost_usage:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
-              last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m])
-            -
-              (
-                last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m] offset 5m)
-                or
-                (0 * last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[5m]))
-              )
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model) (
+                last_over_time(claude_code_cost_usage_USD_total[5m])
+              -
+                (
+                  last_over_time(claude_code_cost_usage_USD_total[5m] offset 5m)
+                  or
+                  (0 * last_over_time(claude_code_cost_usage_USD_total[5m]))
+                )
+            )
+          , "marketplace", "none", "marketplace", "")
 
       # Per agent / skill / plugin over time (all token types, all models, all hosts).
       - record: claude_code:token_usage_by_component:delta5m
@@ -136,14 +157,18 @@ groups:
       #     - sum(last_over_time(claude_code:token_usage_by_component:cumulative[1h] @ start()))
       - record: claude_code:token_usage_by_component:cumulative
         expr: >
-          sum by (marketplace, plugin_name, skill_name, agent_name) (
-            last_over_time(claude_code_token_usage_tokens_total{marketplace!=""}[30d])
-          )
+          label_replace(
+            sum by (marketplace, plugin_name, skill_name, agent_name) (
+              last_over_time(claude_code_token_usage_tokens_total[30d])
+            )
+          , "marketplace", "none", "marketplace", "")
       - record: claude_code:cost_usage_by_component:cumulative
         expr: >
-          sum by (marketplace, plugin_name, skill_name, agent_name) (
-            last_over_time(claude_code_cost_usage_USD_total{marketplace!=""}[30d])
-          )
+          label_replace(
+            sum by (marketplace, plugin_name, skill_name, agent_name) (
+              last_over_time(claude_code_cost_usage_USD_total[30d])
+            )
+          , "marketplace", "none", "marketplace", "")
 
       # Efficiency, over the last hour. Cache hit ratio = cacheRead / all input-side tokens.
       - record: claude_code:cache_hit_ratio:1h
@@ -166,9 +191,9 @@ groups:
 
   # --- quality signals from events (5m) ---------------------------------------------------
   # Counters derived from Claude Code *events* by the Collector (QUALITY_SIGNALS=true).
-  # skill_activated and subagent_completed are scoped to marketplace components (and carry
-  # marketplace/plugin_name); tool results and hook runs name no component, so they are
-  # global (no marketplace label). Same exact-delta method as above; a Collector restart
+  # skill_activated and subagent_completed name their component (marketplace/plugin_name when
+  # it matched a configured marketplace, marketplace="none" otherwise); tool results and hook
+  # runs name no component, so they are global. Same exact-delta method as above; a Collector restart
   # starts new series (the connector's instance id is a label), which the delta handles
   # with a zero baseline.
   - name: claude_code_quality
@@ -177,35 +202,43 @@ groups:
       # Skill activations per 5 minutes (adoption). invocation_trigger: user-slash | claude-proactive | nested-skill.
       - record: claude_code:skill_activations:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, invocation_trigger, skill_source) (
-              last_over_time(claude_code_skill_activations_total[5m])
-            -
-              (last_over_time(claude_code_skill_activations_total[5m] offset 5m) or (0 * last_over_time(claude_code_skill_activations_total[5m])))
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, invocation_trigger, skill_source) (
+                last_over_time(claude_code_skill_activations_total[5m])
+              -
+                (last_over_time(claude_code_skill_activations_total[5m] offset 5m) or (0 * last_over_time(claude_code_skill_activations_total[5m])))
+            )
+          , "marketplace", "none", "marketplace", "")
       # Subagent runs completed.
       - record: claude_code:subagent_completions:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
-              last_over_time(claude_code_subagent_completions_total[5m])
-            -
-              (last_over_time(claude_code_subagent_completions_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_completions_total[5m])))
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
+                last_over_time(claude_code_subagent_completions_total[5m])
+              -
+                (last_over_time(claude_code_subagent_completions_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_completions_total[5m])))
+            )
+          , "marketplace", "none", "marketplace", "")
       - record: claude_code:subagent_tool_uses:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
-              last_over_time(claude_code_subagent_tool_uses_total[5m])
-            -
-              (last_over_time(claude_code_subagent_tool_uses_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_tool_uses_total[5m])))
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
+                last_over_time(claude_code_subagent_tool_uses_total[5m])
+              -
+                (last_over_time(claude_code_subagent_tool_uses_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_tool_uses_total[5m])))
+            )
+          , "marketplace", "none", "marketplace", "")
       # Tool calls that ran, by tool and outcome (success="false" carries error_type). Skill and
       # Agent tool calls also carry skill_name / agent_name / plugin_name / marketplace.
       - record: claude_code:tool_results:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, tool_name, success, error_type) (
-              last_over_time(claude_code_tool_results_total[5m])
-            -
-              (last_over_time(claude_code_tool_results_total[5m] offset 5m) or (0 * last_over_time(claude_code_tool_results_total[5m])))
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, tool_name, success, error_type) (
+                last_over_time(claude_code_tool_results_total[5m])
+              -
+                (last_over_time(claude_code_tool_results_total[5m] offset 5m) or (0 * last_over_time(claude_code_tool_results_total[5m])))
+            )
+          , "marketplace", "none", "marketplace", "")
       # Hook runs.
       - record: claude_code:hook_executions:delta5m
         expr: >
@@ -323,13 +356,13 @@ groups:
       # depend on the first sample).
       - record: claude_code:subagent_duration_seconds:p95_1h
         expr: >
-          histogram_quantile(0.95, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000
+          label_replace(histogram_quantile(0.95, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000, "marketplace", "none", "marketplace", "")
       - record: claude_code:subagent_duration_seconds:p50_1h
         expr: >
-          histogram_quantile(0.5, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000
+          label_replace(histogram_quantile(0.5, sum by (le, marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_bucket[1h]))) / 1000, "marketplace", "none", "marketplace", "")
       - record: claude_code:subagent_duration_seconds:avg_1h
         expr: >
-          (sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_sum[1h])) / (sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_count[1h])) > 0)) / 1000
+          label_replace((sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_sum[1h])) / (sum by (marketplace, plugin_name, agent_type) (increase(claude_code_subagent_duration_ms_count[1h])) > 0)) / 1000, "marketplace", "none", "marketplace", "")
       - record: claude_code:tool_duration_seconds:p95_1h
         expr: >
           histogram_quantile(0.95, sum by (le, tool_name) (increase(claude_code_tool_duration_ms_bucket[1h]))) / 1000
@@ -348,11 +381,13 @@ groups:
       # Failed API requests per 5 minutes. No component labels = main session / unmatched (global).
       - record: claude_code:api_errors:delta5m
         expr: >
-          sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, status_code) (
-              last_over_time(claude_code_api_errors_total[5m])
-            -
-              (last_over_time(claude_code_api_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_api_errors_total[5m])))
-          )
+          label_replace(
+            sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, status_code) (
+                last_over_time(claude_code_api_errors_total[5m])
+              -
+                (last_over_time(claude_code_api_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_api_errors_total[5m])))
+            )
+          , "marketplace", "none", "marketplace", "")
       # API errors per agent / skill / plugin (only those that name one).
       - record: claude_code:api_errors_by_component:delta5m
         expr: >

@@ -1,0 +1,61 @@
+# Unit tests for recording-rules.yml:
+#
+#   docker run --rm --entrypoint promtool -v "$PWD/infra/prometheus:/r:ro" \
+#     prom/prometheus:v3.15.0 test rules /r/recording-rules.test.yml
+#
+# Session a uses a skill from the configured marketplace "acme" and a skill from user
+# settings; session b is a main session that used no component at all. Every series
+# starts non-zero, as Claude Code's per-session counters do.
+rule_files:
+  - recording-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="a",marketplace="acme",plugin_name="p",skill_name="s1",type="input"}'
+        values: '100+10x15'
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="a",skill_name="mine",type="input"}'
+        values: '50+5x15'
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="b",type="input"}'
+        values: '20+2x15'
+      - series: 'claude_code_skill_activations_total{host_name="h",skill_name="mine",invocation_trigger="user-slash"}'
+        values: '1+1x15'
+    promql_expr_test:
+      # Exact 5-minute deltas, for marketplace and non-marketplace usage alike.
+      - expr: claude_code:token_usage:delta5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'claude_code:token_usage:delta5m{host_name="h",marketplace="acme",plugin_name="p",skill_name="s1",type="input"}'
+            value: 50
+          - labels: 'claude_code:token_usage:delta5m{host_name="h",marketplace="none",skill_name="mine",type="input"}'
+            value: 25
+          - labels: 'claude_code:token_usage:delta5m{host_name="h",marketplace="none",type="input"}'
+            value: 10
+      - expr: claude_code:token_usage_by_component:delta5m{marketplace="none"}
+        eval_time: 10m
+        exp_samples:
+          - labels: 'claude_code:token_usage_by_component:delta5m{marketplace="none",skill_name="mine"}'
+            value: 25
+          - labels: 'claude_code:token_usage_by_component:delta5m{marketplace="none"}'
+            value: 10
+      # Both sessions count; session a counts once per marketplace, once in total.
+      - expr: claude_code:active_sessions:count1h
+        eval_time: 10m
+        exp_samples:
+          - labels: 'claude_code:active_sessions:count1h{host_name="h",marketplace="acme"}'
+            value: 1
+          - labels: 'claude_code:active_sessions:count1h{host_name="h",marketplace="none"}'
+            value: 2
+      - expr: claude_code:active_sessions_by_host:count1h
+        eval_time: 10m
+        exp_samples:
+          - labels: 'claude_code:active_sessions_by_host:count1h{host_name="h"}'
+            value: 2
+      # Events from a non-marketplace skill are selectable under "none" too.
+      - expr: claude_code:skill_activations_by_skill:delta5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'claude_code:skill_activations_by_skill:delta5m{marketplace="none",skill_name="mine"}'
+            value: 5

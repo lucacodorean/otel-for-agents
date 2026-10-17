@@ -481,6 +481,12 @@ Resulting Prometheus labels include `marketplace`, `plugin_name`, `skill_name`,
 
 `EXTRA_PLUGIN_ALLOWLIST` plugins are kept in `drop` mode but get no `marketplace` label.
 
+The recording rules keep everything the Collector sends and label whatever has no `marketplace`
+as `marketplace="none"`: skills and agents from user or project settings, plugins from other
+marketplaces, `EXTRA_PLUGIN_ALLOWLIST` plugins and the main session's own usage. To monitor
+those alongside your marketplaces, use `label` mode (or leave `MARKETPLACES` empty); in `drop`
+mode they never reach Prometheus.
+
 ## Quality signals
 
 Skill activations, tool outcomes, subagent runs and hook runs are emitted by Claude Code
@@ -577,8 +583,12 @@ The delta rules are evaluated every 5 minutes, so time series use a 5-minute ste
 shows up within about 5 minutes. The `Cumulative ... since the start of the range` panels use
 PromQL's `@ start()` modifier: the running total is zero at the left edge of whatever range you pick.
 
+The marketplace dropdown also offers `none`: everything outside a configured marketplace (see
+[Filter modes](#filter-modes)). In the per-agent / skill panels, usage that belongs to no agent or
+skill is shown as `main session`.
+
 The dashboards are **generated**: edit `infra/grafana/generate_dashboards.py` (its `SECTIONS` map decides the folders) and run
-`python3 infra/grafana/generate_dashboards.py` (standard library only), then commit the JSON.
+`python3 infra/grafana/generate_dashboards.py` (standard library only, Python 3.12 or later), then commit the JSON.
 The script rewrites `dashboards/` completely. Grafana polls it every 30 seconds; after changing the folder
 layout or `provisioning/`, restart it (`docker compose --env-file ../../.env restart grafana` in `infra/grafana`).
 Provisioned dashboards are read-only in Grafana (`allowUiUpdates: false`); build your own in the
@@ -752,7 +762,8 @@ infra/
                         docker-compose.macos.yml (SSH agent override on macOS)
   collector/            Collector config template
   prometheus/           dev Prometheus: compose file, prometheus.yml and web-config
-                        templates, recording-rules.yml
+                        templates, recording-rules.yml and its promtool unit tests
+                        (recording-rules.test.yml; the command is in its header)
   grafana/              Grafana: compose file, provisioning (data source, dashboard
                         provider), dashboards/*.json and the script that generates them
   start.sh, stop.sh     bring the whole stack up / down: detect the OS and run linux/ or macos/
