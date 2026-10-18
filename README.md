@@ -1,17 +1,22 @@
-# Claude Code telemetry for private plugin marketplaces
+# Claude Code telemetry
 
 A self-hosted pipeline that collects the OpenTelemetry **metrics** Claude Code emits
-about the plugins, skills and agents distributed through your private marketplaces,
-and stores them in Prometheus, with Grafana dashboards on top. Everything
-stays on infrastructure you control; nothing is sent to third parties.
+(sessions, tokens, cost, models, tools, skills, agents and plugins), stores them in
+Prometheus and shows them in ready-made Grafana dashboards. Everything stays on
+infrastructure you control; nothing is sent to third parties.
 
-- Claude Code only. Linux and macOS only (macOS is untested so far).
+Out of the box it monitors all of your Claude Code usage. Optionally, configure your
+plugin **marketplaces** to attribute plugins, skills and agents to them, and to keep only
+their data (see [Marketplaces and syncing](#marketplaces-and-syncing)).
+
+- Claude Code only. Linux and macOS (macOS is less tested).
 - Metrics, plus **quality signals** derived from Claude Code events (skill activations, tool
   results, subagent runs, hook runs). The events themselves are read in memory and never
   stored or exported; only counters and histograms reach Prometheus
   (see [Quality signals](#quality-signals)).
-- This phase ships a **development** Prometheus and a local Grafana with ready-made dashboards.
-  A production Prometheus and alerting are out of scope.
+- Ships a **development** Prometheus, whose retention, size cap and late-data window are
+  set in `.env`, and a local Grafana. A production Prometheus and alerting are out of scope.
+- One command (`infra/start.sh`) starts the stack and points Claude Code at it.
 
 ## Contents
 
@@ -264,7 +269,7 @@ Requirements: Docker with the compose plugin, and `git`. Linux and macOS are sup
 
 ```bash
 cp .env.example .env
-$EDITOR .env                                  # set PROMETHEUS_PASSWORD, MARKETPLACES, ...
+$EDITOR .env                                  # set PROMETHEUS_PASSWORD (MARKETPLACES is optional), ...
 
 infra/start.sh                                # does steps 1-5 below in one go (see "Start script")
 ```
@@ -276,7 +281,7 @@ Or step by step:
 infra/docker/otel_setup.sh prometheus render-config
 (cd infra/prometheus && docker compose --env-file ../../.env up -d)
 
-# 2. fetch the marketplace catalog and build the allowlist
+# 2. only with MARKETPLACES set: fetch the catalogs and build the allowlist
 infra/docker/otel_setup.sh marketplace sync
 
 # 3. start the Collector
@@ -436,7 +441,9 @@ contain quotes, `$`, backslashes or whitespace.
 | `COLLECTOR_TIMEZONE` | `UTC` | IANA timezone of the Collector's log timestamps, e.g. `Europe/Bucharest`. `Etc/GMT-3` means UTC+3 (the sign is inverted). |
 | `METRICS_EXPORT_INTERVAL_MS` | `60000` | How often Claude Code exports metrics (minimum 1000). |
 | `DEV_PROMETHEUS_PORT` | `9090` | Host port (on `127.0.0.1`) of the dev Prometheus. |
-| `DEV_PROMETHEUS_RETENTION` | `2d` | Retention of the dev Prometheus. |
+| `DEV_PROMETHEUS_RETENTION` | `2d` | How long the dev Prometheus keeps data, counted back from its newest sample. `0` = no time limit (requires `DEV_PROMETHEUS_RETENTION_SIZE`). |
+| `DEV_PROMETHEUS_RETENTION_SIZE` | empty | Optional disk cap, e.g. `20GB`; the oldest data is dropped first. Empty = no cap. |
+| `DEV_PROMETHEUS_OUT_OF_ORDER_WINDOW` | `DEV_PROMETHEUS_RETENTION` | How late a sample may arrive and still be stored. Without it, samples older than about an hour are rejected as "out of bounds" and block the Collector's WAL. Required when retention is `0`. |
 
 ## Marketplaces and syncing
 

@@ -135,5 +135,6 @@ def render_prometheus_files(cfg: Config, bcrypt_hash: str) -> dict[str, str]:
     web = (PROM_DIR / "web-config.yml.example").read_text()
     web = web.replace("__USERNAME__", cfg.username).replace("__BCRYPT_HASH__", bcrypt_hash)
     prom = (PROM_DIR / "prometheus.yml.example").read_text()
-    prom = prom.replace("__SCHEME__", "http").replace("__USERNAME__", cfg.username)
+    prom = (prom.replace("__SCHEME__", "http").replace("__USERNAME__", cfg.username)
+            .replace("__OUT_OF_ORDER_WINDOW__", cfg.dev_out_of_order_window))
     return {"web-config.yml": web, "prometheus.yml": prom, "scrape-password": cfg.password}

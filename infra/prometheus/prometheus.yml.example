@@ -3,6 +3,13 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Accept late samples (e.g. a Collector WAL backlog) instead of rejecting them as
+# "out of bounds", which blocks the exporter's WAL. Set by
+# DEV_PROMETHEUS_OUT_OF_ORDER_WINDOW (.env, defaults to DEV_PROMETHEUS_RETENTION).
+storage:
+  tsdb:
+    out_of_order_time_window: __OUT_OF_ORDER_WINDOW__
+
 rule_files:
   - recording-rules.yml
 

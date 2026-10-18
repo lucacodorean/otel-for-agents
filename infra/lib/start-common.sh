@@ -41,7 +41,13 @@ if $prometheus && [[ $url == http://prometheus:* || $url == http://prometheus/* 
     echo "[dry-run] would start infra/prometheus (docker compose up -d)"
   else
     docker network inspect otel-net >/dev/null 2>&1 || docker network create otel-net >/dev/null
+    started="$(docker inspect -f '{{.State.StartedAt}}' otel-dev-prometheus 2>/dev/null || true)"
     (cd "$infra/prometheus" && docker compose --env-file ../../.env up -d)
+    # A changed prometheus.yml alone does not recreate the container, so reload it. Only
+    # when compose left it running: a SIGHUP before Prometheus is ready terminates it.
+    if [[ -n $started && $started == "$(docker inspect -f '{{.State.StartedAt}}' otel-dev-prometheus)" ]]; then
+      docker kill -s HUP otel-dev-prometheus >/dev/null
+    fi
   fi
 else
   if $prometheus; then reason="the endpoint is $url, not the dev Prometheus"; else reason="--no-prometheus"; fi
