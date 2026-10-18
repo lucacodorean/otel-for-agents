@@ -15,6 +15,7 @@ DEFAULT_WAL_DIR = "/var/lib/otelcol/wal"  # a path inside the Collector containe
 CONTAINER_CA_FILE = "/etc/otelcol/ca.pem"  # where PROMETHEUS_CA_FILE is mounted in the containers
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+DURATION_RE = r"0|\d+(ms|s|m|h|d|w|y)"
 BOOLS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
 
 
@@ -50,6 +51,8 @@ class Config:
     grafana_admin_password: str | None = None
     dev_port: int = 9090
     dev_retention: str = "2d"
+    dev_retention_size: str | None = None
+    dev_out_of_order_window: str = "2d"
     extra: dict = field(default_factory=dict)
 
     @property
@@ -233,8 +236,20 @@ def build_config(env: dict[str, str]) -> Config:
     if port > 65535:
         errors.append("DEV_PROMETHEUS_PORT: must be <= 65535")
     retention = get("DEV_PROMETHEUS_RETENTION") or "2d"
-    if not re.fullmatch(r"\d+(ms|s|m|h|d|w|y)", retention):
+    if not re.fullmatch(DURATION_RE, retention):
         errors.append(f"DEV_PROMETHEUS_RETENTION: expected e.g. 2d or 12h, got {retention!r}")
+    retention_size = get("DEV_PROMETHEUS_RETENTION_SIZE") or None
+    if retention_size and not re.fullmatch(r"\d+(B|KB|MB|GB|TB|PB|EB)", retention_size):
+        errors.append(f"DEV_PROMETHEUS_RETENTION_SIZE: expected e.g. 512MB or 20GB, got {retention_size!r}")
+    no_time_limit = bool(re.fullmatch(r"0+[a-z]*", retention))
+    if no_time_limit and not retention_size:
+        # Prometheus silently falls back to 15d when neither limit is set.
+        errors.append("DEV_PROMETHEUS_RETENTION: 0 (no time limit) needs DEV_PROMETHEUS_RETENTION_SIZE")
+    ooo_window = get("DEV_PROMETHEUS_OUT_OF_ORDER_WINDOW") or (None if no_time_limit else retention)
+    if ooo_window is None:
+        errors.append("DEV_PROMETHEUS_OUT_OF_ORDER_WINDOW: required when DEV_PROMETHEUS_RETENTION is 0")
+    elif not re.fullmatch(DURATION_RE, ooo_window):
+        errors.append(f"DEV_PROMETHEUS_OUT_OF_ORDER_WINDOW: expected e.g. 2d or 12h, got {ooo_window!r}")
 
     if errors:
         raise ConfigError("Invalid configuration:\n  - " + "\n  - ".join(errors))
@@ -245,7 +260,8 @@ def build_config(env: dict[str, str]) -> Config:
         marketplaces=tuple(marketplaces), extra_plugins=extras, filter_mode=mode,
         collector_version=version, wal_dir=wal_dir, export_interval_ms=interval, timezone=tz, quality_signals=quality, grafana_port=grafana_port,
         grafana_admin_password=grafana_password,
-        dev_port=port, dev_retention=retention,
+        dev_port=port, dev_retention=retention, dev_retention_size=retention_size,
+        dev_out_of_order_window=ooo_window or "0s",
     )
 
 

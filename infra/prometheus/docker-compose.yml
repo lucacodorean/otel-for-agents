@@ -12,6 +12,7 @@ services:
       - --web.enable-remote-write-receiver
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${DEV_PROMETHEUS_RETENTION:-2d}
+      - --storage.tsdb.retention.size=${DEV_PROMETHEUS_RETENTION_SIZE:-0B}  # 0B = no size limit
     ports:
       - "127.0.0.1:${DEV_PROMETHEUS_PORT:-9090}:9090"
     volumes:

@@ -9,3 +9,4 @@ infra/collector/otel-collector.plist
 infra/collector/otel-collector.service
 infra/collector/config.yaml
 .claude/
+otel_setup/__pycache__
