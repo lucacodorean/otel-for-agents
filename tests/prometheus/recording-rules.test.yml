@@ -1,13 +1,15 @@
 # Unit tests for recording-rules.yml:
 #
-#   docker run --rm --entrypoint promtool -v "$PWD/infra/prometheus:/r:ro" \
-#     prom/prometheus:v3.15.0 test rules /r/recording-rules.test.yml
+#   docker run --rm --entrypoint promtool -v "$PWD:/r:ro" -w /r \
+#     prom/prometheus:v3.15.0 test rules tests/prometheus/recording-rules.test.yml
+#
+# (run from the repository root; pytest tests/prometheus runs it too).
 #
 # Session a uses a skill from the configured marketplace "acme" and a skill from user
 # settings; session b is a main session that used no component at all. Every series
 # starts non-zero, as Claude Code's per-session counters do.
 rule_files:
-  - recording-rules.yml
+  - ../../infra/prometheus/recording-rules.yml
 
 evaluation_interval: 1m
 

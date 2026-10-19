@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["bcrypt>=4"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pyyaml>=6"]
+dev = ["pytest>=8", "pyyaml>=6", "tzdata"]  # tzdata: zoneinfo on images without one (alpine)
 
 [project.scripts]
 otel_setup = "otel_setup.cli:main"
@@ -20,3 +20,8 @@ packages = ["otel_setup"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/otel-setup etc. are not packages: importlib mode allows equal file names across suites,
+# and the repository root on sys.path makes `tests.support` importable.
+addopts = ["--import-mode=importlib", "-ra"]
+pythonpath = ["."]
+markers = ["docker: needs a Docker daemon (containers for promtool, the Collector, Prometheus, Grafana)"]
