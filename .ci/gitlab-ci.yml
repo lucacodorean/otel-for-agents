@@ -1,0 +1,52 @@
+# GitLab CI pipeline. Point the project at it once:
+#   Settings > CI/CD > General pipelines > CI/CD configuration file: .ci/gitlab-ci.yml
+# The jobs only call .ci/run-tests.sh, the same script the GitHub workflow runs.
+stages: [test]
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+default:
+  cache:
+    key: pip
+    paths: [.cache/pip]
+  artifacts:
+    when: always
+    reports:
+      junit: reports/junit-*.xml
+
+# Pure Python tests, on the oldest and newest supported Python.
+unit:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.13"]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+    - pip install -q -e ".[dev]"
+  script:
+    - .ci/run-tests.sh unit
+
+# Container tests against the pinned images: promtool, the Collector, Prometheus, Grafana.
+# Needs a runner that allows docker:dind (privileged). Tests talk to containers only through
+# `docker cp` and a curl container on a test network, so the remote dind daemon is fine.
+docker:
+  stage: test
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  parallel:
+    matrix:
+      - SUITE: [otel-setup, prometheus, grafana]
+  before_script:
+    - apk add --no-cache bash git python3 py3-pip >/dev/null
+    - python3 -m venv /venv && . /venv/bin/activate
+    - pip install -q -e ".[dev]"
+    - until docker info >/dev/null 2>&1; do sleep 1; done
+  script:
+    - . /venv/bin/activate && .ci/run-tests.sh docker "$SUITE"

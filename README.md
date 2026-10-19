@@ -769,15 +769,40 @@ infra/
                         docker-compose.macos.yml (SSH agent override on macOS)
   collector/            Collector config template
   prometheus/           dev Prometheus: compose file, prometheus.yml and web-config
-                        templates, recording-rules.yml and its promtool unit tests
-                        (recording-rules.test.yml; the command is in its header)
+                        templates, recording-rules.yml
   grafana/              Grafana: compose file, provisioning (data source, dashboard
                         provider), dashboards/*.json and the script that generates them
   start.sh, stop.sh     bring the whole stack up / down: detect the OS and run linux/ or macos/
   linux/, macos/        per-OS start.sh / stop.sh: Docker checks, then lib/*-common.sh
   lib/                  platform.sh (OS detection, dispatch) and the shared start/stop steps
+tests/                  pytest suites (see Tests): otel-setup/, prometheus/ (including the
+                        promtool rule tests, recording-rules.test.yml), grafana/
+.ci/                    run-tests.sh (the one CI entry point) and gitlab-ci.yml
+.github/workflows/      tests.yml: GitHub Actions, calls .ci/run-tests.sh
 docs/intro.md           the original brief
 ```
+
+### Tests
+
+```bash
+pip install -e ".[dev]"
+.ci/run-tests.sh unit                 # pure Python, seconds, no Docker
+.ci/run-tests.sh docker               # needs Docker; pulls the pinned images
+.ci/run-tests.sh all prometheus -- -k rules   # one suite, extra pytest arguments
+```
+
+| Suite | Unit | Docker |
+|---|---|---|
+| `tests/otel-setup` | `.env` validation, settings merge/restore, Collector rendering, marketplace sync, CLI | `otelcol validate` on rendered configs; OTLP metrics and events through a Collector into Prometheus |
+| `tests/prometheus` | rendered `prometheus.yml` / `web-config.yml`, rule naming | `promtool check` and the rule unit tests; a running dev Prometheus (auth, rules, retention, remote-write probe) |
+| `tests/grafana` | committed dashboards match the generator, only defined recording rules are queried | Grafana provisions the data source and every dashboard |
+
+Docker tests use the image tags pinned in the compose files and never bind-mount host paths
+(`docker cp` plus a curl container), so they also run against a remote daemon such as GitLab's
+`docker:dind`. Without Docker they are skipped, except in `.ci/run-tests.sh docker|all`, which
+fails instead. CI runs the unit tests on Python 3.10 and 3.13 and each Docker suite as its own job:
+GitHub Actions through `.github/workflows/tests.yml`; on GitLab, set the project's CI/CD
+configuration file to `.ci/gitlab-ci.yml`.
 
 ## Limitations
 
