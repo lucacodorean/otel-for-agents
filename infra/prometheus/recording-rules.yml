@@ -10,10 +10,14 @@
 # increase() never counts that first sample and badly undercounts short sessions and
 # rarely used skills. Instead the rules below take exact deltas:
 #
-#     delta = last_over_time(x[W]) - (last_over_time(x[W] offset W) or 0)
+#     delta = last_over_time(x[W]) - (last_over_time(x[7d] offset W) or 0)
 #
-# i.e. the last value in this window minus the last value in the previous window, with 0
-# for series that are new. Summed over series this adds up each session's growth exactly.
+# i.e. the last value in this window minus the last value the series had before this
+# window, with 0 only for series that are new (no sample in the previous 7 days). Looking
+# back 7d rather than one window matters: a series that reappears after a gap (no exports
+# for a while, then the Collector re-sends the same cumulative value) must not be treated
+# as new, or its whole lifetime total would be counted as one step's consumption. Summed
+# over series this adds up each session's growth exactly.
 # Consecutive windows do not overlap, so the *:delta5m series can be summed over any
 # period with sum_over_time() and that gives exact consumption for that period.
 #
@@ -100,7 +104,7 @@ groups:
                 last_over_time(claude_code_token_usage_tokens_total[5m])
               -
                 (
-                  last_over_time(claude_code_token_usage_tokens_total[5m] offset 5m)
+                  last_over_time(claude_code_token_usage_tokens_total[7d] offset 5m)
                   or
                   (0 * last_over_time(claude_code_token_usage_tokens_total[5m]))
                 )
@@ -113,7 +117,7 @@ groups:
                 last_over_time(claude_code_cost_usage_USD_total[5m])
               -
                 (
-                  last_over_time(claude_code_cost_usage_USD_total[5m] offset 5m)
+                  last_over_time(claude_code_cost_usage_USD_total[7d] offset 5m)
                   or
                   (0 * last_over_time(claude_code_cost_usage_USD_total[5m]))
                 )
@@ -206,7 +210,7 @@ groups:
             sum by (host_name, marketplace, plugin_name, skill_name, invocation_trigger, skill_source) (
                 last_over_time(claude_code_skill_activations_total[5m])
               -
-                (last_over_time(claude_code_skill_activations_total[5m] offset 5m) or (0 * last_over_time(claude_code_skill_activations_total[5m])))
+                (last_over_time(claude_code_skill_activations_total[7d] offset 5m) or (0 * last_over_time(claude_code_skill_activations_total[5m])))
             )
           , "marketplace", "none", "marketplace", "")
       # Subagent runs completed.
@@ -216,7 +220,7 @@ groups:
             sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
                 last_over_time(claude_code_subagent_completions_total[5m])
               -
-                (last_over_time(claude_code_subagent_completions_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_completions_total[5m])))
+                (last_over_time(claude_code_subagent_completions_total[7d] offset 5m) or (0 * last_over_time(claude_code_subagent_completions_total[5m])))
             )
           , "marketplace", "none", "marketplace", "")
       - record: claude_code:subagent_tool_uses:delta5m
@@ -225,7 +229,7 @@ groups:
             sum by (host_name, marketplace, plugin_name, agent_type, model, is_async) (
                 last_over_time(claude_code_subagent_tool_uses_total[5m])
               -
-                (last_over_time(claude_code_subagent_tool_uses_total[5m] offset 5m) or (0 * last_over_time(claude_code_subagent_tool_uses_total[5m])))
+                (last_over_time(claude_code_subagent_tool_uses_total[7d] offset 5m) or (0 * last_over_time(claude_code_subagent_tool_uses_total[5m])))
             )
           , "marketplace", "none", "marketplace", "")
       # Tool calls that ran, by tool and outcome (success="false" carries error_type). Skill and
@@ -236,7 +240,7 @@ groups:
             sum by (host_name, marketplace, plugin_name, skill_name, agent_name, tool_name, success, error_type) (
                 last_over_time(claude_code_tool_results_total[5m])
               -
-                (last_over_time(claude_code_tool_results_total[5m] offset 5m) or (0 * last_over_time(claude_code_tool_results_total[5m])))
+                (last_over_time(claude_code_tool_results_total[7d] offset 5m) or (0 * last_over_time(claude_code_tool_results_total[5m])))
             )
           , "marketplace", "none", "marketplace", "")
       # Hook runs.
@@ -245,21 +249,21 @@ groups:
           sum by (host_name, hook_event, hook_name) (
               last_over_time(claude_code_hook_executions_total[5m])
             -
-              (last_over_time(claude_code_hook_executions_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_executions_total[5m])))
+              (last_over_time(claude_code_hook_executions_total[7d] offset 5m) or (0 * last_over_time(claude_code_hook_executions_total[5m])))
           )
       - record: claude_code:hook_blocking:delta5m
         expr: >
           sum by (host_name, hook_event, hook_name) (
               last_over_time(claude_code_hook_blocking_total[5m])
             -
-              (last_over_time(claude_code_hook_blocking_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_blocking_total[5m])))
+              (last_over_time(claude_code_hook_blocking_total[7d] offset 5m) or (0 * last_over_time(claude_code_hook_blocking_total[5m])))
           )
       - record: claude_code:hook_errors:delta5m
         expr: >
           sum by (host_name, hook_event, hook_name) (
               last_over_time(claude_code_hook_errors_total[5m])
             -
-              (last_over_time(claude_code_hook_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_hook_errors_total[5m])))
+              (last_over_time(claude_code_hook_errors_total[7d] offset 5m) or (0 * last_over_time(claude_code_hook_errors_total[5m])))
           )
 
       # Rollups: per skill, per trigger, per agent.
@@ -385,7 +389,7 @@ groups:
             sum by (host_name, marketplace, plugin_name, skill_name, agent_name, model, status_code) (
                 last_over_time(claude_code_api_errors_total[5m])
               -
-                (last_over_time(claude_code_api_errors_total[5m] offset 5m) or (0 * last_over_time(claude_code_api_errors_total[5m])))
+                (last_over_time(claude_code_api_errors_total[7d] offset 5m) or (0 * last_over_time(claude_code_api_errors_total[5m])))
             )
           , "marketplace", "none", "marketplace", "")
       # API errors per agent / skill / plugin (only those that name one).

@@ -556,6 +556,10 @@ Counters live as long as the Collector. A Collector restart starts new series (t
 instance id is a label); the delta rules treat that as a zero baseline, so only events in the
 restart window itself can be lost.
 
+The baseline looks back 7 days, so a series that reappears after a gap (no exports for a
+while, then the same cumulative value re-sent) counts only its growth, not its lifetime
+total. A series with no sample in the last 7 days counts as new and starts from zero.
+
 ## Grafana dashboards
 
 A local Grafana (`infra/grafana`, pinned `grafana/grafana`) is provisioned entirely from files:
