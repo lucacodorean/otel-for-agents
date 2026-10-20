@@ -1,0 +1,14 @@
+{
+  "name": "telemetry-for-ai",
+  "displayName": "Telemetry for your agentic environment",
+  "version": "1.0.0",
+  "description": "Provide telemetry and monitoring capabilities for your agentic environment, allowing you to track performance, usage, and other metrics.",
+  "author": {
+    "name": "Luca-Andrei Codorean",
+    "email": "codoreanluca@gmail.com"
+  },
+  "repository": "https://github.com/lucacodorean/otel-for-agents",
+  "license": "Apache-2.0",
+  "keywords": ["telemetry", "monitoring", "metrics", "agentic environment"],
+  "skills": ["./skills/"]
+}
