@@ -61,3 +61,29 @@ tests:
         exp_samples:
           - labels: 'claude_code:skill_activations_by_skill:delta5m{marketplace="none",skill_name="mine"}'
             value: 5
+
+  # A series that resumes after a gap is not new: only its growth counts, never its lifetime
+  # total. Session g is idle (no samples for 10m) and resumes 100 higher; session n is born
+  # inside the window with 70, which counts in full.
+  - interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="g",type="input"}'
+        values: '1000 1000 _x10 1100 1100 1100 1100'
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="n",type="input"}'
+        values: '_x12 70 70 70 70'
+    promql_expr_test:
+      - expr: claude_code:token_usage:delta5m
+        eval_time: 15m
+        exp_samples:
+          - labels: 'claude_code:token_usage:delta5m{host_name="h",marketplace="none",type="input"}'
+            value: 170
+  - interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{host_name="h",session_id="g",type="input"}'
+        values: '1000 1000 _x10 1000 1000 1000 1000'
+    promql_expr_test:
+      - expr: claude_code:token_usage:delta5m
+        eval_time: 15m
+        exp_samples:
+          - labels: 'claude_code:token_usage:delta5m{host_name="h",marketplace="none",type="input"}'
+            value: 0

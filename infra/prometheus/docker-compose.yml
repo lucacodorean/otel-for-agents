@@ -10,6 +10,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.config.file=/etc/prometheus/web-config.yml
       - --web.enable-remote-write-receiver
+      - --web.enable-admin-api  # series deletion (dev only)
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${DEV_PROMETHEUS_RETENTION:-2d}
       - --storage.tsdb.retention.size=${DEV_PROMETHEUS_RETENTION_SIZE:-0B}  # 0B = no size limit
